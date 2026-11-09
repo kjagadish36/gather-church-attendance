@@ -1,6 +1,6 @@
-# Gather
+# BBS Gather
 
-An Expo / React Native attendance app for one church, with member self-check-in and administrator reporting. Android and iPhone share the same TypeScript source. A browser preview is also available.
+An Expo / React Native attendance app for The Bangalore Bible Students, with member self-check-in and administrator reporting. Android and iPhone share the same TypeScript source. A browser preview is also available.
 
 ## Included
 

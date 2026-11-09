@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collectPages, hasCheckedIn, hasMemberAccess, isOpen } from './domain';
 import { supabase } from './supabase';
-import type { ChurchData, NewService, Profile } from './types';
+import type { ChurchData, ChurchLocation, NewService, Profile } from './types';
 
 const demoKey = 'gather-demo-v1';
 export const demoMemberId = 'demo-member';
@@ -23,7 +23,7 @@ function seed(): ChurchData {
   ];
   const attendance = profiles.filter(profile => profile.role === 'member').flatMap((profile, index) => services.filter(service => service.id.startsWith('past') && (index === 0 || index % 3 !== 0)).map(service => ({ id: `${profile.id}-${service.id}`, member_id: profile.id, service_id: service.id, checked_in_at: service.opens_at })));
   profiles.slice(1, 5).forEach(profile => attendance.push({ id: `${profile.id}-today`, member_id: profile.id, service_id: 'today', checked_in_at: iso(-1800000) }));
-  return { profiles, services, attendance };
+  return { profiles, services, attendance, church_location: { latitude: 12.952476897125502, longitude: 77.62284464550632, radius_meters: 100 } };
 }
 
 async function loadDemo(): Promise<ChurchData> {
@@ -61,7 +61,9 @@ export async function loadData(demo: boolean): Promise<ChurchData> {
     readTable<ChurchData['services'][number]>('services', 'opens_at'),
     readTable<ChurchData['attendance'][number]>('attendance', 'checked_in_at'),
   ]);
-  return { profiles, services, attendance };
+  const { data: locationRow } = await client.from('church_settings').select('*').eq('id', 'singleton').maybeSingle();
+  const church_location: ChurchLocation | null = locationRow ? { latitude: locationRow.latitude, longitude: locationRow.longitude, radius_meters: locationRow.radius_meters } : null;
+  return { profiles, services, attendance, church_location };
 }
 
 export async function checkIn(demo: boolean, memberId: string, serviceId: string): Promise<void> {
@@ -102,6 +104,18 @@ export async function setServiceEnabled(demo: boolean, serviceId: string, enable
   }
   if (!supabase) throw new Error('Database not configured.');
   const { error } = await supabase.from('services').update({ enabled }).eq('id', serviceId);
+  if (error) throw new Error(error.message);
+}
+
+export async function setChurchLocation(demo: boolean, location: ChurchLocation): Promise<void> {
+  if (demo) {
+    const data = await loadDemo();
+    data.church_location = location;
+    await AsyncStorage.setItem(demoKey, JSON.stringify(data));
+    return;
+  }
+  if (!supabase) throw new Error('Database not configured.');
+  const { error } = await supabase.from('church_settings').upsert({ id: 'singleton', ...location });
   if (error) throw new Error(error.message);
 }
 

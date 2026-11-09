@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { ArrowRight, Church } from 'lucide-react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ArrowRight } from 'lucide-react-native';
+import { logoUri } from './logoData';
 import { supabase } from './supabase';
 import { Button, colors, Field, T } from './ui';
 import { useLanguage } from './Language';
@@ -37,7 +38,8 @@ export default function Auth({ onDemo }: { onDemo: () => void }) {
 
   return <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.page}>
     <View style={styles.form}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Church size={29} color={colors.green} /><T style={{ fontFamily: 'Newsreader_600SemiBold', fontSize: 35 }}>Gather</T></View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Image source={{ uri: logoUri }} style={{ width: 29, height: 29, borderRadius: 6 }} /><T raw style={{ fontFamily: 'Newsreader_600SemiBold', fontSize: 35 }}>BBS Gather</T></View>
+      <T raw style={{ color: colors.muted, fontSize: 13 }}>The Bangalore Bible Students</T>
       <View style={{ marginVertical: 25, gap: 9 }}><T style={{ fontFamily: 'Newsreader_600SemiBold', fontSize: 34 }}>{signup ? 'Find your place.' : 'Welcome back.'}</T><T style={{ color: colors.muted }}>{signup ? 'Create your church member account.' : 'Sign in to your church community.'}</T></View>
       <View style={{ gap: 18 }}>
         <LanguageSelector registration={signup} disabled={busy} />

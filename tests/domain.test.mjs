@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/domain.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { isOpen, hasCheckedIn, makeService, initials, collectPages, attendanceByMonth, attendanceRate, hasMemberAccess, missedStreak } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { isOpen, hasCheckedIn, makeService, initials, collectPages, attendanceByMonth, attendanceRate, hasMemberAccess, missedStreak, distanceMeters, isWithinChurchRadius } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const service = { enabled: true, opens_at: '2026-11-08T09:00:00Z', closes_at: '2026-11-08T11:00:00Z' };
 
 const translationSource = await readFile(new URL('../src/translations.ts', import.meta.url), 'utf8');
@@ -178,6 +178,19 @@ test('missedStreak counts consecutive misses back from the latest eligible servi
   assert.equal(missedStreak([], [], member, now), 0);
 });
 
+test('distanceMeters measures great-circle distance and isWithinChurchRadius gates on it', () => {
+  const church = { latitude: 12.9716, longitude: 77.5946, radius_meters: 150 };
+  assert.equal(distanceMeters(church, church), 0);
+  // 1 degree of latitude is ~111.32km; a point 1 degree north must be far outside any sane radius.
+  const oneDegreeNorth = { latitude: church.latitude + 1, longitude: church.longitude };
+  const distance = distanceMeters(church, oneDegreeNorth);
+  assert.ok(distance > 110000 && distance < 112000, `expected ~111.3km, got ${distance}`);
+  assert.equal(isWithinChurchRadius(church, church), true);
+  assert.equal(isWithinChurchRadius(oneDegreeNorth, church), false);
+  const justInside = { latitude: church.latitude + 0.001, longitude: church.longitude };
+  assert.equal(isWithinChurchRadius(justInside, church), distanceMeters(justInside, church) <= church.radius_meters);
+});
+
 test('registration stores each preferred language without granting account roles', () => {
   for (const language of Object.keys(languages)) {
     assert.deepEqual(registrationMetadata(' Jordan Ellis ', language), { full_name: 'Jordan Ellis', preferred_language: language });
@@ -208,7 +221,8 @@ test('app-owned visible text and translated templates have catalog entries', asy
     }
     visit(source);
   }
-  labels.delete('Gather');
+  labels.delete('BBS Gather');
+  labels.delete('The Bangalore Bible Students');
   for (const label of labels) {
     if (/[A-Za-z]/.test(label)) assert.ok(Object.hasOwn(messages, label), `Missing translation: ${label}`);
   }

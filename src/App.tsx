@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, Pressable, RefreshControl, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import { DMSans_400Regular, DMSans_700Bold } from '@expo-google-fonts/dm-sans';
 import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader';
-import { CalendarDays, Church, ClipboardCheck, History, RefreshCw, ShieldCheck, UserRound, Users, X } from 'lucide-react-native';
+import { CalendarDays, ClipboardCheck, History, RefreshCw, ShieldCheck, UserRound, Users, X } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import { logoUri } from './logoData';
 import Auth from './Auth';
 import Screens from './Screens';
 import type { Tab } from './Screens';
-import { checkIn, demoAdminId, demoMemberId, demoPendingId, loadData, reviewMembership, saveService, setServiceEnabled } from './data';
+import { checkIn, demoAdminId, demoMemberId, demoPendingId, loadData, reviewMembership, saveService, setChurchLocation, setServiceEnabled } from './data';
 import { hasMemberAccess } from './domain';
 import { supabase } from './supabase';
 import type { ChurchData, NewService } from './types';
@@ -139,15 +140,15 @@ function GatherApp() {
 
   return <SafeAreaProvider><StatusBar style="dark" /><SafeAreaView style={styles.page}>
     {!identity ? <Auth onDemo={() => { setIdentity({ id: demoMemberId, demo: true }); setAuthReady(true); }} /> : <View style={styles.layout}>
-      {wide && <View style={styles.sidebar}><View style={styles.brand}><Church size={28} color={colors.green} /><T raw style={styles.brandText}>Gather</T></View><T style={[styles.sidebarLabel, { marginBottom: 25 }]}>{admin ? 'CHURCH ADMINISTRATION' : 'CHURCH COMMUNITY'}</T>{navigation()}<View style={{ flex: 1 }} />{user && <View style={styles.sidebarProfile}><Avatar name={user.full_name} small /><View style={{ flex: 1 }}><T raw style={{ fontFamily: 'DMSans_700Bold', fontSize: 12 }}>{user.full_name}</T><T style={{ color: colors.muted, fontSize: 10 }}>{admin ? 'Administrator' : 'Member'}</T></View></View>}</View>}
+      {wide && <View style={styles.sidebar}><View style={styles.brand}><Image source={{ uri: logoUri }} style={styles.brandLogo} /><T raw style={styles.brandText}>BBS Gather</T></View><T raw style={styles.brandCaption}>The Bangalore Bible Students</T><T style={[styles.sidebarLabel, { marginBottom: 25 }]}>{admin ? 'CHURCH ADMINISTRATION' : 'CHURCH COMMUNITY'}</T>{navigation()}<View style={{ flex: 1 }} />{user && <View style={styles.sidebarProfile}><Avatar name={user.full_name} small /><View style={{ flex: 1 }}><T raw style={{ fontFamily: 'DMSans_700Bold', fontSize: 12 }}>{user.full_name}</T><T style={{ color: colors.muted, fontSize: 10 }}>{admin ? 'Administrator' : 'Member'}</T></View></View>}</View>}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={[styles.header, width < 360 && { paddingHorizontal: 8 }]}><View style={styles.brand}>{!wide && <Church size={24} color={colors.green} />}<T raw={!wide} style={wide ? styles.headerTitle : styles.brandText}>{wide ? nav.find(item => item.id === tab)?.label : 'Gather'}</T></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>{identity.demo && width >= 360 && <Badge text="DEMO" tone="gold" />}{identity.demo && <IconButton label={admin ? 'Switch to member demo' : 'Switch to admin demo'} icon={admin ? UserRound : ShieldCheck} onPress={switchDemo} disabled={busy} />}<IconButton label="Refresh attendance" icon={RefreshCw} onPress={retry} disabled={busy || refreshing} />{user && <Pressable accessibilityRole="button" accessibilityLabel={t('Open account')} onPress={() => setTab('account')}><Avatar name={user.full_name} small /></Pressable>}</View></View>
+        <View style={[styles.header, width < 360 && { paddingHorizontal: 8 }]}><View style={styles.brand}>{!wide && <Image source={{ uri: logoUri }} style={styles.brandLogoSmall} />}<T raw={!wide} style={wide ? styles.headerTitle : styles.brandText}>{wide ? nav.find(item => item.id === tab)?.label : 'BBS Gather'}</T></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>{identity.demo && width >= 360 && <Badge text="DEMO" tone="gold" />}{identity.demo && <IconButton label={admin ? 'Switch to member demo' : 'Switch to admin demo'} icon={admin ? UserRound : ShieldCheck} onPress={switchDemo} disabled={busy} />}<IconButton label="Refresh attendance" icon={RefreshCw} onPress={retry} disabled={busy || refreshing} />{user && <Pressable accessibilityRole="button" accessibilityLabel={t('Open account')} onPress={() => setTab('account')}><Avatar name={user.full_name} small /></Pressable>}</View></View>
         <ScrollView keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={retry} tintColor={colors.green} />} contentContainerStyle={[styles.content, wide && { paddingHorizontal: 45, paddingTop: 36 }]}>
           <View style={styles.inner}>
             {identity.demo && <View style={styles.demoStrip}><T style={{ fontSize: 11, color: colors.gold }}>{t('Sample data · {role} demo · Not connected', { role: t(admin ? 'Admin' : 'Member') })}</T></View>}
             {!!error && <View style={styles.error}><T accessibilityRole="alert" style={{ color: colors.red, flex: 1 }}>{errorText(error)}</T><IconButton label="Retry loading" icon={RefreshCw} onPress={retry} /></View>}
             {!!notice && <View style={styles.notice}><T accessibilityRole="alert" style={{ color: colors.green, flex: 1 }}>{notice}</T><IconButton label="Dismiss notification" icon={X} onPress={() => setNotice('')} /></View>}
-            {!data ? !error && <ActivityIndicator color={colors.green} style={{ marginTop: 50 }} /> : !user ? <View style={{ gap: 15 }}><T>Your member profile could not be found. Contact your church administrator.</T><Button label="Sign out" secondary onPress={signOut} /></View> : <Screens key={`${identity.id}-${tab}`} data={data} user={user} demo={identity.demo} busy={busy} tab={tab} refreshing={refreshing} navigate={setTab} onCheckIn={id => { void mutate(() => checkIn(identity.demo, identity.id, id), 'Your attendance has been saved.'); }} onMarkPresent={(memberId, serviceId) => mutate(() => checkIn(identity.demo, memberId, serviceId), 'Attendance recorded.')} onCreate={(service: NewService) => mutate(() => saveService(identity.demo, service), 'Service created.')} onToggle={(id, enabled) => { void mutate(() => setServiceEnabled(identity.demo, id, enabled), enabled ? 'Check-in enabled for the service window.' : 'Check-in paused.'); }} onReview={(id, decision) => mutate(() => reviewMembership(identity.demo, identity.id, id, decision), decision === 'approved' ? 'Membership approved.' : 'Membership request rejected.')} onRefresh={retry} onPendingDemo={() => { if (identity.demo && !busy) setIdentity({ id: demoPendingId, demo: true }); }} onSignOut={signOut} onSwitchDemo={switchDemo} />}
+            {!data ? !error && <ActivityIndicator color={colors.green} style={{ marginTop: 50 }} /> : !user ? <View style={{ gap: 15 }}><T>Your member profile could not be found. Contact your church administrator.</T><Button label="Sign out" secondary onPress={signOut} /></View> : <Screens key={`${identity.id}-${tab}`} data={data} user={user} demo={identity.demo} busy={busy} tab={tab} refreshing={refreshing} navigate={setTab} onCheckIn={id => { void mutate(() => checkIn(identity.demo, identity.id, id), 'Your attendance has been saved.'); }} onMarkPresent={(memberId, serviceId) => mutate(() => checkIn(identity.demo, memberId, serviceId), 'Attendance recorded.')} onCreate={(service: NewService) => mutate(() => saveService(identity.demo, service), 'Service created.')} onToggle={(id, enabled) => { void mutate(() => setServiceEnabled(identity.demo, id, enabled), enabled ? 'Check-in enabled for the service window.' : 'Check-in paused.'); }} onSetChurchLocation={location => mutate(() => setChurchLocation(identity.demo, location), 'Church location saved.')} onReview={(id, decision) => mutate(() => reviewMembership(identity.demo, identity.id, id, decision), decision === 'approved' ? 'Membership approved.' : 'Membership request rejected.')} onRefresh={retry} onPendingDemo={() => { if (identity.demo && !busy) setIdentity({ id: demoPendingId, demo: true }); }} onSignOut={signOut} onSwitchDemo={switchDemo} />}
           </View>
         </ScrollView>
         {!wide && user && navigation()}
@@ -163,6 +164,9 @@ const styles = StyleSheet.create({
   sidebar: { width: 228, backgroundColor: '#fff', borderRightWidth: 1, borderColor: colors.line, padding: 25, paddingTop: 31 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   brandText: { fontSize: 27, fontFamily: 'Newsreader_600SemiBold' },
+  brandCaption: { color: colors.muted, fontSize: 11 },
+  brandLogo: { width: 28, height: 28, borderRadius: 6 },
+  brandLogoSmall: { width: 24, height: 24, borderRadius: 5 },
   sidebarLabel: { color: colors.muted, fontSize: 9, fontFamily: 'DMSans_700Bold', marginTop: 16 },
   sidebarNav: { gap: 7 },
   sideLink: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, minHeight: 48, borderRadius: 6 },

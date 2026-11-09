@@ -125,4 +125,24 @@ grant select on public.profiles, public.services, public.attendance to authentic
 grant insert, update on public.services to authenticated;
 grant insert (member_id, service_id) on public.attendance to authenticated;
 
+-- Single-row church geofence config, used to gate self check-in to on-site members.
+create table if not exists public.church_settings (
+  id text primary key default 'singleton' check (id = 'singleton'),
+  latitude double precision not null,
+  longitude double precision not null,
+  radius_meters integer not null check (radius_meters > 0)
+);
+
+alter table public.church_settings enable row level security;
+drop policy if exists church_settings_read on public.church_settings;
+create policy church_settings_read on public.church_settings for select to authenticated
+using (public.has_member_access());
+drop policy if exists church_settings_write on public.church_settings;
+create policy church_settings_write on public.church_settings for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+revoke all on public.church_settings from anon, authenticated;
+grant select on public.church_settings to authenticated;
+grant insert, update on public.church_settings to authenticated;
+
 commit;

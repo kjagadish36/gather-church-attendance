@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import { Image, Linking, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
+import * as Location from 'expo-location';
 import { ArrowRight, CalendarDays, Check, CheckCircle2, ChevronRight, Clock3, Download, LogOut, MapPin, Plus, QrCode, RefreshCw, Search, ShieldCheck, UserRound, X } from 'lucide-react-native';
-import { attendanceRate, hasCheckedIn, hasMemberAccess, isOpen, localDay, makeService, missedStreak } from './domain';
+import { attendanceRate, distanceMeters, hasCheckedIn, hasMemberAccess, isOpen, localDay, makeService, missedStreak } from './domain';
 import AttendanceChart from './AttendanceChart';
 import { exportAttendance } from './exportAttendance';
 import type { ExportFormat } from './exportAttendance';
 import { QRCodeDisplay, QRScanner } from './QRCheckIn';
-import type { ChurchData, NewService, Profile, Service } from './types';
+import type { ChurchData, ChurchLocation, NewService, Profile, Service } from './types';
 import { Avatar, Badge, Button, colors, Empty, Field, Section, ServiceRow, Sheet, T } from './ui';
 import { useLanguage } from './Language';
 import LanguageSelector from './LanguageSelector';
@@ -18,6 +19,7 @@ type Props = {
   onMarkPresent: (memberId: string, serviceId: string) => void;
   onCreate: (service: NewService) => Promise<boolean>;
   onToggle: (id: string, enabled: boolean) => void;
+  onSetChurchLocation: (location: ChurchLocation) => Promise<boolean>;
   onSignOut: () => void; onSwitchDemo: () => void;
   onPendingDemo: () => void; onRefresh: () => void; refreshing: boolean;
   onReview: (id: string, decision: 'approved' | 'rejected') => Promise<boolean>;
@@ -45,7 +47,7 @@ function RecordRow({ name, time }: { name: string; time: string }) {
   return <View style={styles.record}><Avatar name={name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{name}</T><T style={styles.small}>{timeLabel(time)}</T></View><Badge text="Present" /></View>;
 }
 
-export default function Screens({ data, user, tab, demo, busy, navigate, onCheckIn, onMarkPresent, onCreate, onToggle, onSignOut, onSwitchDemo, onPendingDemo, onRefresh, refreshing, onReview }: Props) {
+export default function Screens({ data, user, tab, demo, busy, navigate, onCheckIn, onMarkPresent, onCreate, onToggle, onSetChurchLocation, onSignOut, onSwitchDemo, onPendingDemo, onRefresh, refreshing, onReview }: Props) {
   const { t, locale, date: dateLabel, time: timeLabel, number } = useLanguage();
   const [search, setSearch] = useState('');
   const [historyFilter, setHistoryFilter] = useState('All');
@@ -67,6 +69,11 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
   const [exportError, setExportError] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [showingQr, setShowingQr] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [checkInError, setCheckInError] = useState('');
+  const [locationPrompt, setLocationPrompt] = useState<{ serviceId: string; canAskAgain: boolean } | null>(null);
+  const [settingLocation, setSettingLocation] = useState(false);
+  const [locationSetError, setLocationSetError] = useState('');
   const admin = user.role === 'admin';
   const services = [...data.services].sort((first, second) => Date.parse(second.opens_at) - Date.parse(first.opens_at));
   const openServices = services.filter(service => isOpen(service));
@@ -96,6 +103,47 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     finally { setExporting(false); }
   }
 
+  async function handleCheckIn(serviceId: string) {
+    const church = data.church_location;
+    if (!church) { onCheckIn(serviceId); return; }
+    setCheckInError('');
+    const current = await Location.getForegroundPermissionsAsync();
+    let status = current.status;
+    if (status !== 'granted') {
+      if (current.canAskAgain) {
+        const requested = await Location.requestForegroundPermissionsAsync();
+        status = requested.status;
+      }
+      if (status !== 'granted') { setLocationPrompt({ serviceId, canAskAgain: current.canAskAgain }); return; }
+    }
+    setLocating(true);
+    try {
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const distance = distanceMeters(position.coords, church);
+      if (distance > church.radius_meters) { setCheckInError(t('You are {distance}m from the church. Move closer to check in.', { distance: Math.round(distance) })); return; }
+      onCheckIn(serviceId);
+    } catch { setCheckInError('Unable to confirm your location. Please try again.'); }
+    finally { setLocating(false); }
+  }
+
+  async function retryLocationPrompt() {
+    if (!locationPrompt) return;
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status === 'granted') { const { serviceId } = locationPrompt; setLocationPrompt(null); void handleCheckIn(serviceId); }
+    else setLocationPrompt(prompt => prompt && { ...prompt, canAskAgain: false });
+  }
+
+  async function useCurrentLocationForChurch() {
+    setLocationSetError(''); setSettingLocation(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') { setLocationSetError('Location access is required to set the church location.'); return; }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await onSetChurchLocation({ latitude: position.coords.latitude, longitude: position.coords.longitude, radius_meters: 100 });
+    } catch { setLocationSetError('Unable to confirm your location. Please try again.'); }
+    finally { setSettingLocation(false); }
+  }
+
   async function confirmReview() {
     if (!member || !reviewDecision || busy || (reviewDecision === 'approved' && !verified)) return;
     setReviewError(false);
@@ -117,7 +165,8 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
         <T raw style={{ fontFamily: 'Newsreader_600SemiBold', fontSize: 29 }}>{service.title}</T>
         <View style={styles.meta}><Clock3 size={15} color={colors.muted} /><T style={styles.small}>{timeLabel(service.opens_at)} - {timeLabel(service.closes_at)}</T></View>
         <View style={styles.meta}><MapPin size={15} color={colors.muted} /><T raw style={styles.small}>{service.location}</T></View>
-        <Button label={checked ? 'Checked in. See you inside!' : "I'm here"} icon={checked ? CheckCircle2 : Check} disabled={checked} loading={busy && !checked} onPress={() => onCheckIn(service.id)} />
+        <Button label={checked ? 'Checked in. See you inside!' : 'Mark attendance'} icon={checked ? CheckCircle2 : Check} disabled={checked} loading={locating || (busy && !checked)} onPress={() => handleCheckIn(service.id)} />
+        {!checked && !!checkInError && <T accessibilityRole="alert" style={{ color: colors.red }}>{checkInError}</T>}
       </View>
     </View>;
   }
@@ -150,7 +199,12 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     <AttendanceSummary data={data} member={user} />
     <View><Section title="Coming up" />{upcoming.length ? upcoming.slice(0, 2).map(service => <ServiceRow key={service.id} service={service} right={<ChevronRight size={16} color={colors.muted} />} />) : <Empty title="No upcoming services" />}</View>
     <View><Section title="Recent attendance" action="View all" onAction={() => navigate('history')} />{personal.length ? personal.slice(0, 3).map(record => { const service = findService(record.service_id); return service ? <ServiceRow key={record.id} service={service} checkedAt={record.checked_in_at} attended /> : null; }) : <Empty title="Your first check-in starts here" />}</View>
-    {scanning && <Sheet title="Scan QR to check in" onClose={() => setScanning(false)}><QRScanner onScan={() => { setScanning(false); if (openServices[0]) onCheckIn(openServices[0].id); }} onClose={() => setScanning(false)} /></Sheet>}
+    {scanning && <Sheet title="Scan QR to check in" onClose={() => setScanning(false)}><QRScanner onScan={() => { setScanning(false); if (openServices[0]) void handleCheckIn(openServices[0].id); }} onClose={() => setScanning(false)} /></Sheet>}
+    {locationPrompt && <Sheet title="Location access needed" onClose={() => setLocationPrompt(null)}>
+      <T style={{ color: colors.muted }}>{locationPrompt.canAskAgain ? 'Allow location access so we can confirm you\u2019re at church before marking attendance.' : 'Location access is turned off for this app. Enable it in your device settings to mark attendance.'}</T>
+      <Button label={locationPrompt.canAskAgain ? 'Allow location access' : 'Open settings'} icon={MapPin} onPress={() => { locationPrompt.canAskAgain ? void retryLocationPrompt() : void Linking.openSettings(); }} />
+      <Button label="Cancel" secondary onPress={() => setLocationPrompt(null)} />
+    </Sheet>}
   </View>;
 
   if (!admin && tab === 'history') {
@@ -189,7 +243,13 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
         </View>}
       </View>
     </>}
-    {tab === 'services' && <><Button label="Create service" icon={Plus} onPress={() => { setFormError(''); setCreating(true); }} /><View>{services.map(service => <ServiceRow key={service.id} service={service} right={<View style={{ alignItems: 'center', gap: 6, maxWidth: 65 }}><Switch accessibilityLabel={t('Enable check-in for {title} on {date}', { title: service.title, date: dateLabel(service.opens_at) })} value={service.enabled} disabled={busy || Date.parse(service.closes_at) <= Date.now()} onValueChange={enabled => onToggle(service.id, enabled)} trackColor={{ false: colors.line, true: colors.green }} thumbColor="#fff" /><T style={{ fontSize: 10, color: colors.muted, textAlign: 'center' }}>{Date.parse(service.closes_at) <= Date.now() ? 'Ended' : service.enabled ? 'Enabled' : 'Paused'}</T></View>} />)}{!services.length && <Empty title="No services yet" />}</View></>}
+    {tab === 'services' && <><View style={{ gap: 8 }}>
+      <T style={styles.bold}>Church location</T>
+      <T style={styles.small}>{data.church_location ? t('Check-in requires being within {radius}m of church.', { radius: number(data.church_location.radius_meters) }) : 'Members can check in from anywhere until you set the church location.'}</T>
+      <Button label="Use my current location" icon={MapPin} secondary loading={settingLocation} onPress={useCurrentLocationForChurch} />
+      {!!locationSetError && <T accessibilityRole="alert" style={{ color: colors.red }}>{locationSetError}</T>}
+    </View>
+    <Button label="Create service" icon={Plus} onPress={() => { setFormError(''); setCreating(true); }} /><View>{services.map(service => <ServiceRow key={service.id} service={service} right={<View style={{ alignItems: 'center', gap: 6, maxWidth: 65 }}><Switch accessibilityLabel={t('Enable check-in for {title} on {date}', { title: service.title, date: dateLabel(service.opens_at) })} value={service.enabled} disabled={busy || Date.parse(service.closes_at) <= Date.now()} onValueChange={enabled => onToggle(service.id, enabled)} trackColor={{ false: colors.line, true: colors.green }} thumbColor="#fff" /><T style={{ fontSize: 10, color: colors.muted, textAlign: 'center' }}>{Date.parse(service.closes_at) <= Date.now() ? 'Ended' : service.enabled ? 'Enabled' : 'Paused'}</T></View>} />)}{!services.length && <Empty title="No services yet" />}</View></>}
     {tab === 'members' && <>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>{(['pending', 'approved', 'rejected'] as const).map(status => <Pressable key={status} accessibilityRole="tab" accessibilityLabel={t(membershipLabels[status])} aria-selected={membershipFilter === status} onPress={() => { setMembershipFilter(status); setSearch(''); }} style={[styles.filter, membershipFilter === status && styles.filterSelected]}><T>{membershipLabels[status]}</T></Pressable>)}</ScrollView>
       <Field label="Search members" placeholder="Name or email address" value={search} onChangeText={setSearch} /><View>{filteredMembers.map(profile => {

@@ -1,24 +1,31 @@
 {
   "expo": {
-    "name": "Gather",
-    "slug": "gather-church-attendance",
+    "name": "BBS Gather",
+    "slug": "bbs-gather",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/logo.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "org.gather.attendance"
+      "bundleIdentifier": "org.bbsgather.attendance"
     },
     "android": {
-      "package": "org.gather.attendance"
+      "package": "org.bbsgather.attendance",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#ffffff"
+      }
     },
     "web": {
-      "name": "Gather | Church Attendance",
-      "bundler": "metro"
+      "name": "BBS Gather | The Bangalore Bible Students",
+      "bundler": "metro",
+      "favicon": "./assets/logo.png"
     },
     "plugins": [
       "expo-font",
-      ["expo-camera", { "cameraPermission": "Gather uses the camera to scan check-in QR codes." }]
+      ["expo-camera", { "cameraPermission": "BBS Gather uses the camera to scan check-in QR codes." }],
+      ["expo-location", { "locationWhenInUsePermission": "BBS Gather checks your location to confirm you're at church before marking attendance." }]
     ]
   }
 }
