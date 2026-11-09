@@ -24,6 +24,24 @@ export function hasCheckedIn(records: Attendance[], memberId: string, serviceId:
   return records.some(record => record.member_id === memberId && record.service_id === serviceId);
 }
 
+export function makeMemberRegistration(fullName: string, phone: string, email: string): { full_name: string; phone: string; email: string } {
+  const name = fullName.trim();
+  const trimmedPhone = phone.trim();
+  const trimmedEmail = email.trim().toLowerCase();
+  if (!name) throw new Error('Enter a full name.');
+  if (name.length > 120) throw new Error('Full name is too long.');
+  if (!trimmedPhone) throw new Error('Enter a mobile number.');
+  const digits = trimmedPhone.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) throw new Error('Enter a valid mobile number.');
+  if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) throw new Error('Enter a valid email address.');
+  return { full_name: name, phone: trimmedPhone, email: trimmedEmail };
+}
+
+// Supabase Auth needs an email identifier; members who skip email still get one to sign in with.
+export function syntheticEmailFromPhone(phone: string): string {
+  return `${phone.replace(/\D/g, '')}@phone.gather.invalid`;
+}
+
 export function hasMemberAccess(member: Pick<Profile, 'role' | 'membership_status'>): boolean {
   return member.role === 'admin' || member.membership_status === 'approved';
 }

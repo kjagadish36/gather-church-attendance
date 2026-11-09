@@ -13,9 +13,9 @@ function seed(): ChurchData {
   const iso = (offset: number) => new Date(now + offset).toISOString();
   const day = 86400000;
   const profiles: Profile[] = ['Jordan Ellis', 'Grace Thompson', 'Daniel James', 'Sarah Williams', 'Michael Chen', 'Ruth Anderson', 'David Wilson', 'Esther Paul'].map((name, index) => ({
-    id: index === 0 ? demoMemberId : `demo-${index}`, full_name: name, email: `${name.toLowerCase().replace(' ', '.')}@example.com`, role: 'member', created_at: iso(-90 * day), membership_status: 'approved', approved_at: iso(-90 * day),
+    id: index === 0 ? demoMemberId : `demo-${index}`, full_name: name, email: `${name.toLowerCase().replace(' ', '.')}@example.com`, phone: `98765 4320${index}`, role: 'member', created_at: iso(-90 * day), membership_status: 'approved', approved_at: iso(-90 * day),
   }));
-  profiles.push({ id: demoAdminId, full_name: 'Alex Morgan', email: 'admin@example.com', role: 'admin', created_at: iso(-90 * day) });
+  profiles.push({ id: demoAdminId, full_name: 'Alex Morgan', email: 'admin@example.com', phone: '98765 43209', role: 'admin', created_at: iso(-90 * day) });
   const services = [
     { id: 'today', title: 'Sunday Worship', location: 'Main sanctuary', opens_at: iso(-3600000), closes_at: iso(6 * 3600000), enabled: true },
     { id: 'midweek', title: 'Midweek Prayer', location: 'Community hall', opens_at: iso(3 * day), closes_at: iso(3 * day + 7200000), enabled: true },
@@ -135,4 +135,29 @@ export async function reviewMembership(demo: boolean, actorId: string, memberId:
   if (!supabase) throw new Error('Database not configured.');
   const { error } = await supabase.rpc('review_membership', { target_member: memberId, decision });
   if (error) throw new Error('Unable to save membership decision. Please try again.');
+}
+
+export async function createMember(demo: boolean, actorId: string, fullName: string, phone: string, email: string): Promise<void> {
+  if (demo) {
+    const data = await loadDemo();
+    const actor = data.profiles.find(profile => profile.id === actorId);
+    if (actor?.role !== 'admin') throw new Error('Only administrators can register members.');
+    if (data.profiles.some(profile => profile.phone === phone)) throw new Error('A member with that mobile number already exists.');
+    if (email && data.profiles.some(profile => (profile.email ?? '').toLowerCase() === email.toLowerCase())) throw new Error('A member with that email already exists.');
+    const now = new Date().toISOString();
+    data.profiles.push({ id: `member-${Date.now()}`, full_name: fullName, phone, email: email || undefined, role: 'member', created_at: now, membership_status: 'approved', approved_at: now });
+    await AsyncStorage.setItem(demoKey, JSON.stringify(data));
+    return;
+  }
+  if (!supabase) throw new Error('Database not configured.');
+  const { error } = await supabase.functions.invoke('admin-create-member', { body: { full_name: fullName, phone, email } });
+  if (error) throw new Error('Unable to register member. Please try again.');
+}
+
+export async function resetMemberPassword(demo: boolean, actorId: string, memberId: string): Promise<string> {
+  if (demo) throw new Error('Password reset isn\'t available in demo mode.');
+  if (!supabase) throw new Error('Database not configured.');
+  const { data: result, error } = await supabase.functions.invoke('admin-reset-password', { body: { member_id: memberId } });
+  if (error || !result?.temp_password) throw new Error('Unable to reset password. Please try again.');
+  return result.temp_password as string;
 }

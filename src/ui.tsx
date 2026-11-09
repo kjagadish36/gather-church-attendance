@@ -71,7 +71,7 @@ export function Empty({ title, detail }: { title: string; detail?: string }) {
 }
 
 export function Sheet({ title, rawTitle = false, onClose, children }: { title: string; rawTitle?: boolean; onClose: () => void; children: React.ReactNode }) {
-  return <Modal transparent animationType="fade" onRequestClose={onClose}><View style={styles.overlay}><View style={styles.sheet}><View style={styles.section}><T raw={rawTitle} style={styles.sectionTitle}>{title}</T><IconButton label="Close dialog" icon={X} onPress={onClose} /></View><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 18, paddingBottom: 24 }}>{children}</ScrollView></View></View></Modal>;
+  return <Modal transparent animationType="fade" onRequestClose={onClose}><View style={styles.overlay}><View style={styles.sheet}><View style={styles.section}><T raw={rawTitle} style={styles.sectionTitle}>{title}</T><IconButton label="Close dialog" icon={X} onPress={onClose} /></View><ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 18, paddingBottom: 24 }}>{children}</ScrollView></View></View></Modal>;
 }
 
 const styles = StyleSheet.create({

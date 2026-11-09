@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Image, Linking, Pressable, ScrollView, StyleSheet, Switch, View } from 'react-native';
 import * as Location from 'expo-location';
-import { ArrowRight, CalendarDays, Check, CheckCircle2, ChevronRight, Clock3, Download, LogOut, MapPin, Plus, QrCode, RefreshCw, Search, ShieldCheck, UserRound, X } from 'lucide-react-native';
-import { attendanceRate, distanceMeters, hasCheckedIn, hasMemberAccess, isOpen, localDay, makeService, missedStreak } from './domain';
+import { ArrowRight, CalendarDays, Check, CheckCircle2, ChevronRight, Clock3, Download, KeyRound, LogOut, MapPin, Plus, QrCode, RefreshCw, Search, ShieldCheck, UserRound, X } from 'lucide-react-native';
+import { attendanceRate, distanceMeters, hasCheckedIn, hasMemberAccess, isOpen, localDay, makeMemberRegistration, makeService, missedStreak } from './domain';
 import AttendanceChart from './AttendanceChart';
 import { exportAttendance } from './exportAttendance';
 import type { ExportFormat } from './exportAttendance';
 import { QRCodeDisplay, QRScanner } from './QRCheckIn';
+import { serviceImageUri } from './serviceImageData';
 import type { ChurchData, ChurchLocation, NewService, Profile, Service } from './types';
 import { Avatar, Badge, Button, colors, Empty, Field, Section, ServiceRow, Sheet, T } from './ui';
 import { useLanguage } from './Language';
@@ -20,6 +21,8 @@ type Props = {
   onCreate: (service: NewService) => Promise<boolean>;
   onToggle: (id: string, enabled: boolean) => void;
   onSetChurchLocation: (location: ChurchLocation) => Promise<boolean>;
+  onRegisterMember: (fullName: string, phone: string, email: string) => Promise<boolean>;
+  onResetPassword: (memberId: string) => Promise<boolean>;
   onSignOut: () => void; onSwitchDemo: () => void;
   onPendingDemo: () => void; onRefresh: () => void; refreshing: boolean;
   onReview: (id: string, decision: 'approved' | 'rejected') => Promise<boolean>;
@@ -47,7 +50,7 @@ function RecordRow({ name, time }: { name: string; time: string }) {
   return <View style={styles.record}><Avatar name={name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{name}</T><T style={styles.small}>{timeLabel(time)}</T></View><Badge text="Present" /></View>;
 }
 
-export default function Screens({ data, user, tab, demo, busy, navigate, onCheckIn, onMarkPresent, onCreate, onToggle, onSetChurchLocation, onSignOut, onSwitchDemo, onPendingDemo, onRefresh, refreshing, onReview }: Props) {
+export default function Screens({ data, user, tab, demo, busy, navigate, onCheckIn, onMarkPresent, onCreate, onToggle, onSetChurchLocation, onRegisterMember, onResetPassword, onSignOut, onSwitchDemo, onPendingDemo, onRefresh, refreshing, onReview }: Props) {
   const { t, locale, date: dateLabel, time: timeLabel, number } = useLanguage();
   const [search, setSearch] = useState('');
   const [historyFilter, setHistoryFilter] = useState('All');
@@ -74,6 +77,12 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
   const [locationPrompt, setLocationPrompt] = useState<{ serviceId: string; canAskAgain: boolean } | null>(null);
   const [settingLocation, setSettingLocation] = useState(false);
   const [locationSetError, setLocationSetError] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [memberName, setMemberName] = useState('');
+  const [memberPhone, setMemberPhone] = useState('');
+  const [memberEmail, setMemberEmail] = useState('');
+  const [memberFormError, setMemberFormError] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
   const admin = user.role === 'admin';
   const services = [...data.services].sort((first, second) => Date.parse(second.opens_at) - Date.parse(first.opens_at));
   const openServices = services.filter(service => isOpen(service));
@@ -83,7 +92,7 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
   const pending = members.filter(profile => (profile.membership_status ?? 'pending') === 'pending');
   const approvedMembers = members.filter(hasMemberAccess);
   const atRisk = approvedMembers.map(profile => ({ profile, streak: missedStreak(data.services, data.attendance, profile) })).filter(entry => entry.streak >= 3).sort((first, second) => second.streak - first.streak);
-  const filteredMembers = members.filter(profile => (profile.membership_status ?? 'pending') === membershipFilter && `${profile.full_name} ${profile.email}`.toLowerCase().includes(search.toLowerCase()));
+  const filteredMembers = members.filter(profile => (profile.membership_status ?? 'pending') === membershipFilter && `${profile.full_name} ${profile.email ?? ''} ${profile.phone ?? ''}`.toLowerCase().includes(search.toLowerCase()));
   const selected = services.find(service => service.id === selectedService) || openServices[0] || services[0];
   const records = data.attendance.filter(record => record.service_id === selected?.id).sort((first, second) => Date.parse(second.checked_in_at) - Date.parse(first.checked_in_at));
   const findService = (id: string) => services.find(service => service.id === id);
@@ -144,12 +153,29 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     finally { setSettingLocation(false); }
   }
 
+  async function registerMember() {
+    setMemberFormError('');
+    try {
+      const { full_name, phone, email } = makeMemberRegistration(memberName, memberPhone, memberEmail);
+      if (await onRegisterMember(full_name, phone, email)) { setRegistering(false); setMemberName(''); setMemberPhone(''); setMemberEmail(''); }
+    } catch (error) { setMemberFormError(error instanceof Error ? error.message : 'Unable to register member.'); }
+  }
+
   async function confirmReview() {
     if (!member || !reviewDecision || busy || (reviewDecision === 'approved' && !verified)) return;
     setReviewError(false);
     if (await onReview(member.id, reviewDecision)) {
       setMember(null); setReviewDecision(null); setVerified(false);
     } else setReviewError(true);
+  }
+
+  async function confirmResetPassword() {
+    if (!member || busy) return;
+    if (await onResetPassword(member.id)) setResettingPassword(false);
+  }
+
+  function contact(profile: Profile): string {
+    return profile.phone ?? profile.email ?? '';
   }
 
   function attendanceList(memberId: string) {
@@ -160,7 +186,7 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
   function liveCard(service: Service) {
     const checked = hasCheckedIn(data.attendance, user.id, service.id);
     return <View style={styles.liveCard} key={service.id}>
-      <Image accessibilityLabel={t('Church sanctuary')} source={{ uri: 'https://images.unsplash.com/photo-1438032005730-c779502df39b?auto=format&fit=crop&w=1100&q=85' }} style={styles.photo} resizeMode="cover" />
+      <Image accessibilityLabel={t('Church sanctuary')} source={{ uri: serviceImageUri }} style={styles.photo} resizeMode="cover" />
       <View style={{ padding: 21, gap: 15 }}><View style={styles.between}><Badge text={checked ? 'YOU ARE CHECKED IN' : 'CHECK-IN OPEN'} /><T style={styles.small}>{new Date(service.opens_at).toLocaleDateString(locale, { weekday: 'long' })}</T></View>
         <T raw style={{ fontFamily: 'Newsreader_600SemiBold', fontSize: 29 }}>{service.title}</T>
         <View style={styles.meta}><Clock3 size={15} color={colors.muted} /><T style={styles.small}>{timeLabel(service.opens_at)} - {timeLabel(service.closes_at)}</T></View>
@@ -172,7 +198,7 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
   }
 
   if (tab === 'account') return <View style={{ gap: 26 }}>
-    <View style={styles.profile}><Avatar name={user.full_name} /><View style={{ flex: 1, gap: 6 }}><T raw style={styles.sectionHeading}>{user.full_name}</T><T raw style={styles.small}>{user.email}</T></View></View>
+    <View style={styles.profile}><Avatar name={user.full_name} /><View style={{ flex: 1, gap: 6 }}><T raw style={styles.sectionHeading}>{user.full_name}</T><T raw style={styles.small}>{contact(user)}</T></View></View>
     <LanguageSelector account={!demo} disabled={busy} />
     <View style={styles.between}><T>Membership status</T><Badge text={admin ? 'Approved' : membershipLabels[user.membership_status ?? 'pending']} tone={hasMemberAccess(user) ? 'green' : 'gold'} /></View>
     <View style={{ gap: 17 }}><View style={styles.between}><T>Account type</T><Badge text={admin ? 'Administrator' : 'Church member'} /></View><View style={styles.between}><T>Connection</T><Badge text={demo ? 'Local demo' : 'Church database'} tone={demo ? 'gold' : 'green'} /></View><View style={styles.between}><T>Member since</T><T style={styles.small}>{dateLabel(user.created_at)}</T></View></View>
@@ -186,7 +212,7 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     <Badge text={membershipLabels[user.membership_status ?? 'pending']} tone="gold" />
     <T style={styles.heading}>{user.membership_status === 'rejected' ? 'Membership request declined' : 'Awaiting church approval'}</T>
     <T style={{ color: colors.muted }}>{user.membership_status === 'rejected' ? 'Please contact your church administrator about your membership request.' : 'Your membership request is waiting for a church administrator to review it.'}</T>
-    <View style={styles.profile}><Avatar name={user.full_name} /><View style={{ flex: 1, gap: 5 }}><T raw style={styles.bold}>{user.full_name}</T><T raw style={styles.small}>{user.email}</T></View></View>
+    <View style={styles.profile}><Avatar name={user.full_name} /><View style={{ flex: 1, gap: 5 }}><T raw style={styles.bold}>{user.full_name}</T><T raw style={styles.small}>{contact(user)}</T></View></View>
     <Button label="Refresh approval status" icon={RefreshCw} onPress={onRefresh} loading={refreshing} />
     <Button label={demo ? 'Exit demo' : 'Sign out'} secondary icon={LogOut} onPress={onSignOut} disabled={busy} />
   </View>;
@@ -225,7 +251,7 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     {tab === 'home' && <>
       {pending.length > 0 && <View><Section title="Membership requests" action="Review requests" onAction={() => navigate('members')} /><T style={styles.small}>{t('{count} awaiting approval', { count: number(pending.length) })}</T></View>}
       <Stats items={[{ value: approvedMembers.length, label: 'Church members' }, { value: records.length, label: 'Selected check-ins' }, { value: openServices.length, label: 'Open services' }]} />
-      {atRisk.length > 0 && <View><Section title="Needs follow-up" /><T style={styles.small}>{t('{count} missed 3+ services in a row', { count: number(atRisk.length) })}</T>{atRisk.map(entry => <View key={entry.profile.id} style={styles.record}><Avatar name={entry.profile.full_name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{entry.profile.full_name}</T><T raw style={styles.small}>{entry.profile.email}</T></View><Badge text={t('Missed {count}', { count: number(entry.streak) })} tone="gold" /></View>)}</View>}
+      {atRisk.length > 0 && <View><Section title="Needs follow-up" /><T style={styles.small}>{t('{count} missed 3+ services in a row', { count: number(atRisk.length) })}</T>{atRisk.map(entry => <View key={entry.profile.id} style={styles.record}><Avatar name={entry.profile.full_name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{entry.profile.full_name}</T><T raw style={styles.small}>{contact(entry.profile)}</T></View><Badge text={t('Missed {count}', { count: number(entry.streak) })} tone="gold" /></View>)}</View>}
       <View style={{ gap: 8 }}>
         <View style={{ flexDirection: 'row', gap: 10 }}><View style={{ flex: 1 }}><Button label="Export attendance (CSV)" icon={Download} secondary onPress={() => runExport('csv')} loading={exporting} /></View><View style={{ flex: 1 }}><Button label="Export attendance (Excel)" icon={Download} secondary onPress={() => runExport('excel')} loading={exporting} /></View></View>
         {exportError && <T accessibilityRole="alert" style={{ color: colors.red }}>Unable to export attendance. Please try again.</T>}
@@ -251,14 +277,15 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
     </View>
     <Button label="Create service" icon={Plus} onPress={() => { setFormError(''); setCreating(true); }} /><View>{services.map(service => <ServiceRow key={service.id} service={service} right={<View style={{ alignItems: 'center', gap: 6, maxWidth: 65 }}><Switch accessibilityLabel={t('Enable check-in for {title} on {date}', { title: service.title, date: dateLabel(service.opens_at) })} value={service.enabled} disabled={busy || Date.parse(service.closes_at) <= Date.now()} onValueChange={enabled => onToggle(service.id, enabled)} trackColor={{ false: colors.line, true: colors.green }} thumbColor="#fff" /><T style={{ fontSize: 10, color: colors.muted, textAlign: 'center' }}>{Date.parse(service.closes_at) <= Date.now() ? 'Ended' : service.enabled ? 'Enabled' : 'Paused'}</T></View>} />)}{!services.length && <Empty title="No services yet" />}</View></>}
     {tab === 'members' && <>
+      <Button label="Add member" icon={Plus} secondary onPress={() => { setMemberFormError(''); setRegistering(true); }} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>{(['pending', 'approved', 'rejected'] as const).map(status => <Pressable key={status} accessibilityRole="tab" accessibilityLabel={t(membershipLabels[status])} aria-selected={membershipFilter === status} onPress={() => { setMembershipFilter(status); setSearch(''); }} style={[styles.filter, membershipFilter === status && styles.filterSelected]}><T>{membershipLabels[status]}</T></Pressable>)}</ScrollView>
       <Field label="Search members" placeholder="Name or email address" value={search} onChangeText={setSearch} /><View>{filteredMembers.map(profile => {
       const rate = attendanceRate(data.services, data.attendance, profile);
       const label = rate.percentage === null ? t('N/A') : `${number(rate.percentage)}%`;
-      return <Pressable accessibilityRole="button" accessibilityLabel={t("View {name}'s attendance", { name: profile.full_name })} onPress={() => { setMember(profile); setVerified(false); setReviewDecision(null); setReviewError(false); }} key={profile.id} style={styles.record}><Avatar name={profile.full_name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{profile.full_name}</T><T raw style={styles.small}>{profile.email}</T></View>{hasMemberAccess(profile) && <View accessible accessibilityLabel={t('Total attendance: {value}', { value: label })}><Badge text={label} tone="muted" /></View>}<ChevronRight size={17} color={colors.muted} /></Pressable>;
+      return <Pressable accessibilityRole="button" accessibilityLabel={t("View {name}'s attendance", { name: profile.full_name })} onPress={() => { setMember(profile); setVerified(false); setReviewDecision(null); setReviewError(false); }} key={profile.id} style={styles.record}><Avatar name={profile.full_name} small /><View style={{ flex: 1, gap: 4 }}><T raw style={styles.bold}>{profile.full_name}</T><T raw style={styles.small}>{contact(profile)}</T></View>{hasMemberAccess(profile) && <View accessible accessibilityLabel={t('Total attendance: {value}', { value: label })}><Badge text={label} tone="muted" /></View>}<ChevronRight size={17} color={colors.muted} /></Pressable>;
     })}{!filteredMembers.length && <Empty title={search ? 'No matching members' : membershipFilter === 'pending' ? 'No membership requests' : 'No matching members'} />}</View></>}
-    {member && <Sheet title={member.full_name} rawTitle onClose={() => { if (!busy) { setMember(null); setHistoryMonth(null); setReviewDecision(null); setReviewError(false); } }}>
-      <T raw style={styles.small}>{member.email}</T><Badge text={membershipLabels[member.membership_status ?? 'pending']} tone={hasMemberAccess(member) ? 'green' : 'gold'} />
+    {member && <Sheet title={member.full_name} rawTitle onClose={() => { if (!busy) { setMember(null); setHistoryMonth(null); setReviewDecision(null); setReviewError(false); setResettingPassword(false); } }}>
+      <T raw style={styles.small}>{contact(member)}</T><Badge text={membershipLabels[member.membership_status ?? 'pending']} tone={hasMemberAccess(member) ? 'green' : 'gold'} />
       {hasMemberAccess(member) ? <><AttendanceSummary data={data} member={member} /><AttendanceChart key={member.id} records={data.attendance.filter(record => record.member_id === member.id)} selectedMonth={historyMonth} onSelectMonth={setHistoryMonth} /><T style={styles.bold}>Attendance history</T>{attendanceList(member.id)}</> : <>
         <T style={styles.small}>{t('Since {date}', { date: dateLabel(member.created_at) })}</T>
         {reviewDecision ? <><T style={styles.sectionHeading}>{t(reviewDecision === 'approved' ? 'Approve {name}?' : "Reject {name}'s request?", { name: member.full_name })}</T><Button label={reviewDecision === 'approved' ? 'Confirm approval' : 'Confirm rejection'} icon={reviewDecision === 'approved' ? Check : X} onPress={confirmReview} loading={busy} /><Button label="Cancel" secondary onPress={() => setReviewDecision(null)} disabled={busy} /></> : <>
@@ -268,9 +295,23 @@ export default function Screens({ data, user, tab, demo, busy, navigate, onCheck
         </>}
         {reviewError && <T accessibilityRole="alert" style={{ color: colors.red }}>Unable to save membership decision. Please try again.</T>}
       </>}
+      {!reviewDecision && (resettingPassword ? <>
+        <T style={styles.sectionHeading}>{t('Give {name} a new temporary password?', { name: member.full_name })}</T>
+        <T style={styles.small}>They'll need it to sign in — share it with them directly, not by email.</T>
+        <Button label="Confirm reset" icon={KeyRound} onPress={confirmResetPassword} loading={busy} />
+        <Button label="Cancel" secondary onPress={() => setResettingPassword(false)} disabled={busy} />
+      </> : <Button label="Reset password" icon={KeyRound} secondary onPress={() => setResettingPassword(true)} disabled={busy} />)}
     </Sheet>}
     {creating && <Sheet title="Create service" onClose={() => { if (!busy) setCreating(false); }}><Field label="Service name" placeholder="Sunday Worship" value={title} onChangeText={setTitle} maxLength={120} /><Field label="Location" placeholder="Main sanctuary" value={location} onChangeText={setLocation} maxLength={160} /><Field label="Date (YYYY-MM-DD)" value={day} onChangeText={setDay} autoCapitalize="none" /><View style={{ flexDirection: 'row', gap: 14 }}><View style={{ flex: 1 }}><Field label="Opens (HH:MM)" value={start} onChangeText={setStart} /></View><View style={{ flex: 1 }}><Field label="Closes (HH:MM)" value={end} onChangeText={setEnd} /></View></View><T style={styles.small}>Times are in your device's local timezone. Sunday services always close at end of day.</T>{!!formError && <T accessibilityRole="alert" style={{ color: colors.red }}>{formError}</T>}<Button label="Save service" icon={Check} onPress={create} loading={busy} /></Sheet>}
     {showingQr && <Sheet title="Check-in QR code" onClose={() => setShowingQr(false)}><QRCodeDisplay /><T style={{ textAlign: 'center', color: colors.muted }}>Print this code once. It checks members into whichever service is open when they scan it.</T></Sheet>}
+    {registering && <Sheet title="Add member" onClose={() => { if (!busy) setRegistering(false); }}>
+      <T style={styles.small}>Registering a member here approves them immediately, without a self sign-up.</T>
+      <Field label="Full name" value={memberName} onChangeText={setMemberName} maxLength={120} />
+      <Field label="Mobile number" value={memberPhone} onChangeText={setMemberPhone} keyboardType="phone-pad" />
+      <Field label="Email address (optional)" value={memberEmail} onChangeText={setMemberEmail} keyboardType="email-address" autoCapitalize="none" />
+      {!!memberFormError && <T accessibilityRole="alert" style={{ color: colors.red }}>{memberFormError}</T>}
+      <Button label="Register member" icon={Check} onPress={registerMember} loading={busy} />
+    </Sheet>}
   </View>;
 }
 

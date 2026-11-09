@@ -8,10 +8,10 @@ import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader';
 import { CalendarDays, ClipboardCheck, History, RefreshCw, ShieldCheck, UserRound, Users, X } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { logoUri } from './logoData';
-import Auth from './Auth';
+import Auth, { ResetPassword } from './Auth';
 import Screens from './Screens';
 import type { Tab } from './Screens';
-import { checkIn, demoAdminId, demoMemberId, demoPendingId, loadData, reviewMembership, saveService, setChurchLocation, setServiceEnabled } from './data';
+import { checkIn, createMember, demoAdminId, demoMemberId, demoPendingId, loadData, resetMemberPassword, reviewMembership, saveService, setChurchLocation, setServiceEnabled } from './data';
 import { hasMemberAccess } from './domain';
 import { supabase } from './supabase';
 import type { ChurchData, NewService } from './types';
@@ -30,6 +30,7 @@ function GatherApp() {
   const [fonts, fontError] = useFonts({ DMSans_400Regular, DMSans_700Bold, Newsreader_600SemiBold });
   const [identity, setIdentity] = useState<Identity | null>(supabase ? null : { id: demoMemberId, demo: true });
   const [authReady, setAuthReady] = useState(!supabase);
+  const [recovering, setRecovering] = useState(false);
   const [data, setData] = useState<ChurchData | null>(null);
   const [tab, setTab] = useState<Tab>('home');
   const [busy, setBusy] = useState(false);
@@ -50,6 +51,8 @@ function GatherApp() {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       authEvent = true;
       if (!alive || identityRef.current?.demo) return;
+      // A password-recovery link signs the user in early; hold them on a "set new password" screen before entering the app.
+      if (event === 'PASSWORD_RECOVERY') { setRecovering(true); setAuthReady(true); return; }
       setIdentity(session ? { id: session.user.id, demo: false } : null);
       const preferred = session?.user.user_metadata.preferred_language;
       if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && isLanguage(preferred)) void setLanguage(preferred).catch(() => {});
@@ -102,6 +105,24 @@ function GatherApp() {
     try { await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to refresh. Check your connection.'); }
   }
 
+  async function finishRecovery() {
+    setRecovering(false);
+    if (!supabase) return;
+    const { data: result } = await supabase.auth.getSession();
+    setIdentity(result.session ? { id: result.session.user.id, demo: false } : null);
+  }
+
+  async function resetPassword(demo: boolean, actorId: string, memberId: string): Promise<boolean> {
+    if (busy) return false;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const tempPassword = await resetMemberPassword(demo, actorId, memberId);
+      setNotice(`New temporary password: ${tempPassword}. Share it with the member directly (not by email) — they should change it after signing in.`);
+      return true;
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to reset password. Please try again.'); return false; }
+    finally { setBusy(false); }
+  }
+
   async function mutate(operation: () => Promise<void>, message: string): Promise<boolean> {
     if (busy) return false;
     setBusy(true); setError(''); setNotice('');
@@ -139,16 +160,16 @@ function GatherApp() {
   if ((!fonts && !fontError) || !authReady || !languageReady) return <SafeAreaProvider><SafeAreaView style={styles.loading}><ActivityIndicator color={colors.green} /></SafeAreaView></SafeAreaProvider>;
 
   return <SafeAreaProvider><StatusBar style="dark" /><SafeAreaView style={styles.page}>
-    {!identity ? <Auth onDemo={() => { setIdentity({ id: demoMemberId, demo: true }); setAuthReady(true); }} /> : <View style={styles.layout}>
+    {recovering ? <ResetPassword onDone={() => { void finishRecovery(); }} /> : !identity ? <Auth onDemo={() => { setIdentity({ id: demoMemberId, demo: true }); setAuthReady(true); }} /> : <View style={styles.layout}>
       {wide && <View style={styles.sidebar}><View style={styles.brand}><Image source={{ uri: logoUri }} style={styles.brandLogo} /><T raw style={styles.brandText}>BBS Gather</T></View><T raw style={styles.brandCaption}>The Bangalore Bible Students</T><T style={[styles.sidebarLabel, { marginBottom: 25 }]}>{admin ? 'CHURCH ADMINISTRATION' : 'CHURCH COMMUNITY'}</T>{navigation()}<View style={{ flex: 1 }} />{user && <View style={styles.sidebarProfile}><Avatar name={user.full_name} small /><View style={{ flex: 1 }}><T raw style={{ fontFamily: 'DMSans_700Bold', fontSize: 12 }}>{user.full_name}</T><T style={{ color: colors.muted, fontSize: 10 }}>{admin ? 'Administrator' : 'Member'}</T></View></View>}</View>}
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={[styles.header, width < 360 && { paddingHorizontal: 8 }]}><View style={styles.brand}>{!wide && <Image source={{ uri: logoUri }} style={styles.brandLogoSmall} />}<T raw={!wide} style={wide ? styles.headerTitle : styles.brandText}>{wide ? nav.find(item => item.id === tab)?.label : 'BBS Gather'}</T></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>{identity.demo && width >= 360 && <Badge text="DEMO" tone="gold" />}{identity.demo && <IconButton label={admin ? 'Switch to member demo' : 'Switch to admin demo'} icon={admin ? UserRound : ShieldCheck} onPress={switchDemo} disabled={busy} />}<IconButton label="Refresh attendance" icon={RefreshCw} onPress={retry} disabled={busy || refreshing} />{user && <Pressable accessibilityRole="button" accessibilityLabel={t('Open account')} onPress={() => setTab('account')}><Avatar name={user.full_name} small /></Pressable>}</View></View>
-        <ScrollView keyboardShouldPersistTaps="handled" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={retry} tintColor={colors.green} />} contentContainerStyle={[styles.content, wide && { paddingHorizontal: 45, paddingTop: 36 }]}>
+        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={retry} tintColor={colors.green} />} contentContainerStyle={[styles.content, wide && { paddingHorizontal: 45, paddingTop: 36 }]}>
           <View style={styles.inner}>
             {identity.demo && <View style={styles.demoStrip}><T style={{ fontSize: 11, color: colors.gold }}>{t('Sample data · {role} demo · Not connected', { role: t(admin ? 'Admin' : 'Member') })}</T></View>}
             {!!error && <View style={styles.error}><T accessibilityRole="alert" style={{ color: colors.red, flex: 1 }}>{errorText(error)}</T><IconButton label="Retry loading" icon={RefreshCw} onPress={retry} /></View>}
             {!!notice && <View style={styles.notice}><T accessibilityRole="alert" style={{ color: colors.green, flex: 1 }}>{notice}</T><IconButton label="Dismiss notification" icon={X} onPress={() => setNotice('')} /></View>}
-            {!data ? !error && <ActivityIndicator color={colors.green} style={{ marginTop: 50 }} /> : !user ? <View style={{ gap: 15 }}><T>Your member profile could not be found. Contact your church administrator.</T><Button label="Sign out" secondary onPress={signOut} /></View> : <Screens key={`${identity.id}-${tab}`} data={data} user={user} demo={identity.demo} busy={busy} tab={tab} refreshing={refreshing} navigate={setTab} onCheckIn={id => { void mutate(() => checkIn(identity.demo, identity.id, id), 'Your attendance has been saved.'); }} onMarkPresent={(memberId, serviceId) => mutate(() => checkIn(identity.demo, memberId, serviceId), 'Attendance recorded.')} onCreate={(service: NewService) => mutate(() => saveService(identity.demo, service), 'Service created.')} onToggle={(id, enabled) => { void mutate(() => setServiceEnabled(identity.demo, id, enabled), enabled ? 'Check-in enabled for the service window.' : 'Check-in paused.'); }} onSetChurchLocation={location => mutate(() => setChurchLocation(identity.demo, location), 'Church location saved.')} onReview={(id, decision) => mutate(() => reviewMembership(identity.demo, identity.id, id, decision), decision === 'approved' ? 'Membership approved.' : 'Membership request rejected.')} onRefresh={retry} onPendingDemo={() => { if (identity.demo && !busy) setIdentity({ id: demoPendingId, demo: true }); }} onSignOut={signOut} onSwitchDemo={switchDemo} />}
+            {!data ? !error && <ActivityIndicator color={colors.green} style={{ marginTop: 50 }} /> : !user ? <View style={{ gap: 15 }}><T>Your member profile could not be found. Contact your church administrator.</T><Button label="Sign out" secondary onPress={signOut} /></View> : <Screens key={`${identity.id}-${tab}`} data={data} user={user} demo={identity.demo} busy={busy} tab={tab} refreshing={refreshing} navigate={setTab} onCheckIn={id => { void mutate(() => checkIn(identity.demo, identity.id, id), 'Your attendance has been saved.'); }} onMarkPresent={(memberId, serviceId) => mutate(() => checkIn(identity.demo, memberId, serviceId), 'Attendance recorded.')} onCreate={(service: NewService) => mutate(() => saveService(identity.demo, service), 'Service created.')} onToggle={(id, enabled) => { void mutate(() => setServiceEnabled(identity.demo, id, enabled), enabled ? 'Check-in enabled for the service window.' : 'Check-in paused.'); }} onSetChurchLocation={location => mutate(() => setChurchLocation(identity.demo, location), 'Church location saved.')} onRegisterMember={(fullName, phone, email) => mutate(() => createMember(identity.demo, identity.id, fullName, phone, email), 'Member registered.')} onResetPassword={memberId => resetPassword(identity.demo, identity.id, memberId)} onReview={(id, decision) => mutate(() => reviewMembership(identity.demo, identity.id, id, decision), decision === 'approved' ? 'Membership approved.' : 'Membership request rejected.')} onRefresh={retry} onPendingDemo={() => { if (identity.demo && !busy) setIdentity({ id: demoPendingId, demo: true }); }} onSignOut={signOut} onSwitchDemo={switchDemo} />}
           </View>
         </ScrollView>
         {!wide && user && navigation()}

@@ -6,7 +6,7 @@ import type { ChurchData } from './types';
 
 export type ExportFormat = 'csv' | 'excel';
 
-const header = ['Member', 'Email', 'Service', 'Location', 'Date', 'Time', 'Checked in at (ISO)', 'Attendance %', 'Attended / Eligible services'];
+const header = ['Member', 'Mobile', 'Email', 'Service', 'Location', 'Date', 'Time', 'Checked in at (ISO)', 'Attendance %', 'Attended / Eligible services'];
 
 export function buildExportRows(data: ChurchData): string[][] {
   const rateByMember = new Map<string, ReturnType<typeof attendanceRate>>();
@@ -29,6 +29,7 @@ export function buildExportRows(data: ChurchData): string[][] {
       const rate = rateFor(record.member_id);
       return [
         member?.full_name ?? 'Unknown member',
+        member?.phone ?? '',
         member?.email ?? '',
         service?.title ?? 'Unknown service',
         service?.location ?? '',

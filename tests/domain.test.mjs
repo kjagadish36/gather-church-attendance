@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/domain.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { isOpen, hasCheckedIn, makeService, initials, collectPages, attendanceByMonth, attendanceRate, hasMemberAccess, missedStreak, distanceMeters, isWithinChurchRadius } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+const { isOpen, hasCheckedIn, makeService, initials, collectPages, attendanceByMonth, attendanceRate, hasMemberAccess, missedStreak, distanceMeters, isWithinChurchRadius, makeMemberRegistration, syntheticEmailFromPhone } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 const service = { enabled: true, opens_at: '2026-11-08T09:00:00Z', closes_at: '2026-11-08T11:00:00Z' };
 
 const translationSource = await readFile(new URL('../src/translations.ts', import.meta.url), 'utf8');
@@ -191,11 +191,26 @@ test('distanceMeters measures great-circle distance and isWithinChurchRadius gat
   assert.equal(isWithinChurchRadius(justInside, church), distanceMeters(justInside, church) <= church.radius_meters);
 });
 
+test('makeMemberRegistration requires a mobile number and makes email optional', () => {
+  assert.deepEqual(makeMemberRegistration(' Jordan Ellis ', ' 98765 43210 ', ' Jordan.Ellis@Example.com '), { full_name: 'Jordan Ellis', phone: '98765 43210', email: 'jordan.ellis@example.com' });
+  assert.deepEqual(makeMemberRegistration('Jordan Ellis', '9876543210', ''), { full_name: 'Jordan Ellis', phone: '9876543210', email: '' });
+  assert.throws(() => makeMemberRegistration('', '9876543210', ''), /full name/);
+  assert.throws(() => makeMemberRegistration('Jordan', '', ''), /mobile number/);
+  assert.throws(() => makeMemberRegistration('Jordan', '123', ''), /valid mobile number/);
+  assert.throws(() => makeMemberRegistration('Jordan', '9876543210', 'not-an-email'), /valid email/);
+  assert.throws(() => makeMemberRegistration('J'.repeat(121), '9876543210', ''), /too long/);
+});
+
+test('syntheticEmailFromPhone builds a stable, non-resolvable login email from digits only', () => {
+  assert.equal(syntheticEmailFromPhone('98765 43210'), '9876543210@phone.gather.invalid');
+  assert.equal(syntheticEmailFromPhone('+91-98765-43210'), '919876543210@phone.gather.invalid');
+});
+
 test('registration stores each preferred language without granting account roles', () => {
   for (const language of Object.keys(languages)) {
-    assert.deepEqual(registrationMetadata(' Jordan Ellis ', language), { full_name: 'Jordan Ellis', preferred_language: language });
+    assert.deepEqual(registrationMetadata(' Jordan Ellis ', ' 9876543210 ', ' jordan@example.com ', language), { full_name: 'Jordan Ellis', phone: '9876543210', email: 'jordan@example.com', preferred_language: language });
   }
-  assert.equal(registrationMetadata('Jordan', 'unsupported').preferred_language, 'en');
+  assert.equal(registrationMetadata('Jordan', '9876543210', '', 'unsupported').preferred_language, 'en');
 });
 
 test('app-owned visible text and translated templates have catalog entries', async () => {

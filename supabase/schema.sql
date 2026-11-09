@@ -12,6 +12,11 @@ alter table public.profiles add column if not exists membership_status text not 
 check (membership_status in ('pending', 'approved', 'rejected'));
 alter table public.profiles add column if not exists approved_at timestamptz;
 
+-- Mobile number is the required registration identifier; email stays optional going forward.
+alter table public.profiles alter column email drop not null;
+alter table public.profiles add column if not exists phone text;
+create unique index if not exists profiles_phone_unique on public.profiles(phone) where phone is not null;
+
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),
   title text not null check (char_length(title) between 1 and 120),
@@ -78,8 +83,15 @@ create or replace function public.handle_new_member()
 returns trigger language plpgsql security definer set search_path = ''
 as $$
 begin
-  insert into public.profiles (id, full_name, email, role, membership_status)
-  values (new.id, left(coalesce(nullif(btrim(new.raw_user_meta_data->>'full_name'), ''), 'Church member'), 120), coalesce(new.email, ''), 'member', 'pending');
+  insert into public.profiles (id, full_name, email, phone, role, membership_status)
+  values (
+    new.id,
+    left(coalesce(nullif(btrim(new.raw_user_meta_data->>'full_name'), ''), 'Church member'), 120),
+    nullif(btrim(new.raw_user_meta_data->>'email'), ''),
+    nullif(btrim(new.raw_user_meta_data->>'phone'), ''),
+    'member',
+    'pending'
+  );
   return new;
 end;
 $$;
@@ -144,5 +156,54 @@ using (public.is_admin()) with check (public.is_admin());
 revoke all on public.church_settings from anon, authenticated;
 grant select on public.church_settings to authenticated;
 grant insert, update on public.church_settings to authenticated;
+
+-- Default admin accounts, so there's always a way in before anyone self-registers.
+-- Sign in with these emails and the password below, then change the password immediately.
+create extension if not exists pgcrypto;
+
+do $$
+declare
+  admin record;
+  new_id uuid;
+begin
+  for admin in
+    select * from (values
+      ('admin1@bbschurch.org', 'Admin One',   '90000 00001'),
+      ('admin2@bbschurch.org', 'Admin Two',   '90000 00002'),
+      ('admin3@bbschurch.org', 'Admin Three', '90000 00003')
+    ) as t(email, full_name, phone)
+  loop
+    select id into new_id from auth.users where email = admin.email;
+
+    if new_id is null then
+      new_id := gen_random_uuid();
+      insert into auth.users (
+        instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+        raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+        confirmation_token, recovery_token, email_change, email_change_token_new
+      ) values (
+        '00000000-0000-0000-0000-000000000000', new_id, 'authenticated', 'authenticated',
+        admin.email, crypt('ChangeMe123!', gen_salt('bf')), now(),
+        '{"provider":"email","providers":["email"]}'::jsonb,
+        jsonb_build_object('full_name', admin.full_name, 'phone', admin.phone),
+        now(), now(), '', '', '', ''
+      );
+
+      insert into auth.identities (
+        id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at
+      ) values (
+        gen_random_uuid(), new_id,
+        jsonb_build_object('sub', new_id::text, 'email', admin.email),
+        'email', new_id::text, now(), now(), now()
+      );
+    end if;
+
+    -- handle_new_member() trigger just inserted this as a pending member; promote to approved admin.
+    insert into public.profiles (id, full_name, email, phone, role, membership_status, approved_at)
+    values (new_id, admin.full_name, admin.email, admin.phone, 'admin', 'approved', now())
+    on conflict (id) do update
+      set role = 'admin', membership_status = 'approved', approved_at = coalesce(public.profiles.approved_at, now());
+  end loop;
+end $$;
 
 commit;
