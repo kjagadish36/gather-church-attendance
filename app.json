@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Gather",
+    "slug": "gather-church-attendance",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.gather.attendance"
+    },
+    "android": {
+      "package": "org.gather.attendance"
+    },
+    "web": {
+      "name": "Gather | Church Attendance",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-font",
+      ["expo-camera", { "cameraPermission": "Gather uses the camera to scan check-in QR codes." }]
+    ]
+  }
+}
